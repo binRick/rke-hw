@@ -16,6 +16,16 @@ spec:
         {{- include "hello-db.labels" . | nindent 8 }}
         app.kubernetes.io/component: app
     spec:
+      {{- if .Values.app.topologySpread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.app.topologySpread.maxSkew }}
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: {{ .Values.app.topologySpread.whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: app
+      {{- end }}
       containers:
         - name: app
           image: "{{ .Values.image.registry }}/{{ .Values.image.app.repository }}:{{ .Values.image.app.tag }}"
@@ -25,18 +35,31 @@ spec:
               containerPort: 8080
           env:
             - name: DB_HOST
-              value: {{ include "hello-db.postgresName" . | quote }}
+              value: {{ include "hello-db.dbHost" . | quote }}
             - name: DB_PORT
               value: "5432"
             - name: DB_NAME
               value: {{ .Values.postgres.database | quote }}
+            {{- if .Values.postgres.ha.enabled }}
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hello-db.dbSecret" . }}
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "hello-db.dbSecret" . }}
+                  key: password
+            {{- else }}
             - name: DB_USER
               value: {{ .Values.postgres.username | quote }}
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "hello-db.postgresName" . }}
+                  name: {{ include "hello-db.dbSecret" . }}
                   key: POSTGRES_PASSWORD
+            {{- end }}
           readinessProbe:
             httpGet:
               path: /readyz

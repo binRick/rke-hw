@@ -16,9 +16,16 @@ hello-db is deploying into namespace "{{ .Release.Namespace }}".
 3. The page shows a visit counter and a guestbook — both stored in
    PostgreSQL running in the same cluster. Sign the guestbook and refresh.
 
-{{- if not .Values.postgres.persistence.enabled }}
+{{- if .Values.postgres.ha.enabled }}
+
+HA mode: Postgres is a {{ .Values.postgres.ha.instances }}-instance
+CloudNativePG cluster with automatic failover. Inspect it with:
+   kubectl -n {{ .Release.Namespace }} get cluster {{ include "hello-db.cnpgName" . }}
+   kubectl cnpg status {{ include "hello-db.cnpgName" . }} -n {{ .Release.Namespace }}
+{{- else if not .Values.postgres.persistence.enabled }}
 
 NOTE: postgres.persistence is disabled (emptyDir) — guestbook data is
 lost if the Postgres pod restarts. That's fine for a demo. For durable
-data, install a StorageClass and set postgres.persistence.enabled=true.
+data, install a StorageClass and set postgres.persistence.enabled=true,
+or enable full HA with postgres.ha.enabled=true (see docs/ha-setup.md).
 {{- end }}

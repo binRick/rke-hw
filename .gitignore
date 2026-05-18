@@ -7,6 +7,11 @@
 /assets/app/hello-db-app.tar
 /assets/app/postgres.tar
 
+# HA (Longhorn / CloudNativePG) multi-image archives — committed split into
+# <90 MB parts; the reassembled tarballs are rebuilt at deploy time.
+/assets/ha/cnpg-images.tar
+/assets/ha/longhorn-images.tar
+
 # Local Python cruft
 __pycache__/
 *.pyc

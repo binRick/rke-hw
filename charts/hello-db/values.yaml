@@ -15,6 +15,11 @@ image:
   postgres:
     repository: postgres
     tag: "16-alpine"
+  # Used only when postgres.ha.enabled=true (CloudNativePG). Pushed into your
+  # private registry by deploy-ha-offline.sh.
+  cnpgPostgres:
+    repository: cloudnative-pg/postgresql
+    tag: "16.4"
 
 postgres:
   database: hello
@@ -33,6 +38,26 @@ postgres:
     storageClass: ""
     size: 1Gi
 
+  # --- High availability -------------------------------------------------
+  # When enabled, the single Postgres Deployment above is REPLACED by a
+  # CloudNativePG Cluster: N instances with synchronous streaming
+  # replication and automatic failover. Requires the CNPG operator and a
+  # multi-node StorageClass (e.g. longhorn) — install both offline with
+  # deploy-ha-offline.sh, then deploy with postgres.ha.enabled=true.
+  ha:
+    enabled: false
+    instances: 3
+    storageClass: "longhorn"
+    size: 5Gi
+    # Synchronous replicas: 1 = quorum commit to >=1 standby (survives a
+    # node loss without data loss). 0 = async.
+    minSyncReplicas: 1
+    maxSyncReplicas: 1
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+
 app:
   replicas: 1
   resources:
@@ -44,3 +69,18 @@ app:
     type: NodePort
     port: 80
     nodePort: 30080
+
+  # Spread app replicas across nodes. Default is a SOFT constraint
+  # (ScheduleAnyway) so the chart still schedules on a single-node cluster;
+  # with >=2 nodes + >=2 replicas it gives node-failure tolerance.
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+    whenUnsatisfiable: ScheduleAnyway   # set DoNotSchedule to enforce hard
+
+  # Keep at least N app pods during voluntary disruptions (node drains,
+  # upgrades). OFF by default because a PDB on a single replica blocks
+  # node drains. Turn on together with app.replicas >= 2.
+  pdb:
+    enabled: false
+    minAvailable: 1

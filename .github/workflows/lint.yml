@@ -61,3 +61,20 @@ jobs:
             --set postgres.persistence.enabled=true \
             --set postgres.persistence.storageClass=local-path \
             --set image.registry=registry.example:5000 >/dev/null
+
+      - name: helm template (HA mode + PDB + spread)
+        run: |
+          helm template hello-db charts/hello-db \
+            --set postgres.ha.enabled=true \
+            --set app.replicas=3 \
+            --set app.pdb.enabled=true \
+            --set app.topologySpread.whenUnsatisfiable=DoNotSchedule \
+            --set image.registry=registry.example:5000 \
+            > /tmp/ha.yaml
+          # Sanity: HA mode emits a CNPG Cluster + a PDB, and the single
+          # Postgres path (its POSTGRES_PASSWORD secret/env) is gone.
+          grep -q 'kind: Cluster'             /tmp/ha.yaml
+          grep -q 'kind: PodDisruptionBudget' /tmp/ha.yaml
+          if grep -q 'POSTGRES_PASSWORD' /tmp/ha.yaml; then
+            echo "single-Postgres artifacts leaked into HA render"; exit 1
+          fi

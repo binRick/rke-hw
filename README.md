@@ -18,8 +18,9 @@ Bundled version: see [`assets/VERSION`](assets/VERSION) — **v1.35.4+rke2r1**
 ├── install-rke2-offline.sh      # the offline installer (run on the air-gapped node)
 ├── install-registry-offline.sh  # optional private OCI registry for your app images
 ├── deploy-app-offline.sh        # deploy the bundled hello-db demo app
+├── deploy-ha-offline.sh         # install HA infra (Longhorn + CloudNativePG)
 ├── app/                         # Flask + Postgres demo source + Containerfile
-├── charts/hello-db/             # Helm chart for the demo app
+├── charts/hello-db/             # Helm chart for the demo app (single or HA)
 ├── assets/                   # all binaries & images — no network needed
 │   ├── install.sh            # official RKE2 installer (artifact mode)
 │   ├── rke2.linux-amd64.tar.gz          # RKE2 binaries (~37 MB)
@@ -34,7 +35,8 @@ Bundled version: see [`assets/VERSION`](assets/VERSION) — **v1.35.4+rke2r1**
 │   └── registries.yaml.example  # private-registry reference
 └── scripts/
     ├── fetch-assets.sh       # re-populate assets/ on a CONNECTED host
-    └── build-app-assets.sh   # build/bundle the demo app on a CONNECTED host
+    ├── build-app-assets.sh   # build/bundle the demo app on a CONNECTED host
+    └── fetch-ha-assets.sh    # bundle Longhorn + CloudNativePG (CONNECTED host)
 ```
 
 ## Quick start (on the air-gapped node)
@@ -352,6 +354,54 @@ releases may be different people/hosts. Decouple them:
 - **Config vs. image:** anything that changes per environment belongs in
   `values.yaml`/`Secret`, not the image — so the same tagged image promotes
   unchanged from dev to the air-gapped cluster.
+
+## High availability (survive a server failure)
+
+The stock chart is a single Postgres pod + single app pod — fine for a demo,
+but if the wrong node dies the site goes down. The repo also ships an
+**optional, fully-offline HA path** so the application stays alive through a
+node loss. Full walkthrough: [`docs/ha-setup.md`](docs/ha-setup.md).
+
+**How RKE2 handles a node failure:** with **≥3 RKE2 server nodes** the
+embedded **etcd** keeps quorum (3 tolerate 1 loss). kubelet heartbeats stop →
+the node goes `NotReady` → its pods are rescheduled onto healthy nodes by
+their Deployment/ReplicaSet, and `Service`/kube-proxy only route to **Ready**
+endpoints. A *stateless* tier self-heals automatically; a *stateful* one only
+recovers if its data can follow it — hence replicated storage + a replicated
+database, not a single pod on a node-local disk.
+
+What the HA path adds (all from bundled assets, no internet):
+
+| Layer | Mechanism | How to turn it on |
+|---|---|---|
+| Control plane | ≥3 RKE2 servers (etcd quorum) | `install-rke2-offline.sh --type server --server … --token …` |
+| App tier | `replicas≥2` + `topologySpreadConstraints` + `PodDisruptionBudget` | `--set app.replicas=3 --set app.pdb.enabled=true` (spread is on by default, soft) |
+| Database | **CloudNativePG**: N-instance Postgres, sync replication, auto-failover | `--set postgres.ha.enabled=true` (replaces the single Deployment) |
+| Storage | **Longhorn**: replicated block storage across nodes | `--set postgres.ha.storageClass=longhorn` |
+
+```bash
+# 1. CONNECTED host: bundle the HA images/manifests
+./scripts/fetch-ha-assets.sh            # -> assets/ha/, commit it
+
+# 2. Air-gapped cluster: install Longhorn + CloudNativePG operator offline
+sudo ./deploy-ha-offline.sh --registry 10.0.0.10:5000 --set-default-sc
+
+# 3. Deploy hello-db in HA mode (3 PG instances, 3 app replicas, PDB)
+KUBECONFIG=/etc/rancher/rke2/rke2.yaml ./assets/app/helm \
+  upgrade --install hello-db ./charts/hello-db -n hello-db --create-namespace \
+  --set image.registry=10.0.0.10:5000 --set postgres.ha.enabled=true \
+  --set app.replicas=3 --set app.pdb.enabled=true --wait
+```
+
+Drain the Postgres primary's node and the guestbook keeps serving —
+CloudNativePG promotes a synchronous standby that already has the data.
+
+> **Honesty note:** the HA scripts and chart are validated by `helm template`
+> and ShellCheck in CI, but a full connected-fetch → air-gapped-install of
+> Longhorn + CNPG has **not** been run by the author. Treat the first run as
+> a commissioning exercise. Longhorn also needs `open-iscsi` on every node
+> (must be available offline) and pulls ~GB of images. See
+> [`docs/ha-setup.md`](docs/ha-setup.md) for the caveats in full.
 
 ## Refreshing / changing version (connected host only)
 

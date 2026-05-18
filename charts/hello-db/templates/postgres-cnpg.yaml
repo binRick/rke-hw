@@ -1,0 +1,42 @@
+{{- if .Values.postgres.ha.enabled }}
+# HA Postgres via CloudNativePG. Requires the CNPG operator + a multi-node
+# StorageClass (install both offline with deploy-ha-offline.sh). Replaces the
+# single Postgres Deployment/Secret/Service.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "hello-db.dbSecret" . }}
+  labels:
+    {{- include "hello-db.labels" . | nindent 4 }}
+type: kubernetes.io/basic-auth
+stringData:
+  username: {{ .Values.postgres.username | quote }}
+  password: {{ .Values.postgres.password | quote }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "hello-db.cnpgName" . }}
+  labels:
+    {{- include "hello-db.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.postgres.ha.instances }}
+  imageName: "{{ .Values.image.registry }}/{{ .Values.image.cnpgPostgres.repository }}:{{ .Values.image.cnpgPostgres.tag }}"
+  imagePullPolicy: {{ .Values.image.pullPolicy }}
+  primaryUpdateStrategy: unsupervised
+  # Quorum-based synchronous replication: commits wait for >=minSyncReplicas
+  # standbys, so losing the primary's node does not lose committed data.
+  minSyncReplicas: {{ .Values.postgres.ha.minSyncReplicas }}
+  maxSyncReplicas: {{ .Values.postgres.ha.maxSyncReplicas }}
+  storage:
+    size: {{ .Values.postgres.ha.size }}
+    storageClass: {{ .Values.postgres.ha.storageClass | quote }}
+  bootstrap:
+    initdb:
+      database: {{ .Values.postgres.database | quote }}
+      owner: {{ .Values.postgres.username | quote }}
+      secret:
+        name: {{ include "hello-db.dbSecret" . }}
+  resources:
+    {{- toYaml .Values.postgres.ha.resources | nindent 4 }}
+{{- end }}
