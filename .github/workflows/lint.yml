@@ -1,0 +1,63 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shellcheck:
+    name: ShellCheck (bash scripts)
+    runs-on: ubuntu-latest
+    steps:
+      # Sparse checkout: skip the ~850 MB assets/ dir — linting never needs it.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            /*.sh
+            scripts
+          sparse-checkout-cone-mode: false
+
+      - name: bash -n syntax check
+        run: |
+          shopt -s nullglob
+          for f in ./*.sh scripts/*.sh; do
+            echo "::group::bash -n $f"; bash -n "$f"; echo "::endgroup::"
+          done
+
+      - name: ShellCheck
+        run: |
+          shellcheck --version
+          shopt -s nullglob
+          # Fail the build on genuine bugs (error severity); style/info
+          # findings are printed for review but don't gate the pipeline.
+          shellcheck --severity=error --shell=bash ./*.sh scripts/*.sh
+          echo "---- full report (warnings/info, non-blocking) ----"
+          shellcheck --severity=style --shell=bash ./*.sh scripts/*.sh || true
+
+  helm:
+    name: Helm chart lint + render
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: charts
+          sparse-checkout-cone-mode: false
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: helm lint
+        run: helm lint charts/hello-db
+
+      - name: helm template (render with defaults)
+        run: helm template hello-db charts/hello-db >/dev/null
+
+      - name: helm template (persistence enabled)
+        run: |
+          helm template hello-db charts/hello-db \
+            --set postgres.persistence.enabled=true \
+            --set postgres.persistence.storageClass=local-path \
+            --set image.registry=registry.example:5000 >/dev/null

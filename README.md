@@ -1,5 +1,7 @@
 # rke-hw — Offline (air-gapped) RKE2 Kubernetes installer
 
+[![lint](https://github.com/binRick/rke-hw/actions/workflows/lint.yml/badge.svg)](https://github.com/binRick/rke-hw/actions/workflows/lint.yml)
+
 Everything required to stand up an [RKE2](https://docs.rke2.io) Kubernetes
 cluster on a **network-disconnected** RHEL / Rocky / Alma / CentOS Stream
 **9 or 10** (x86_64) host is contained in this repository. The target node
