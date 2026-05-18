@@ -1,0 +1,95 @@
+name: release
+
+# Builds a single self-contained offline bundle (the repo + freshly
+# regenerated assets/) so an operator can download ONE file per release
+# instead of git-cloning ~1 GB of binaries.
+#
+#   * push a tag  vX.Y.Z   -> attaches the bundle to that GitHub Release
+#   * manual run (dispatch) -> uploads the bundle as a workflow artifact
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      rke2_version:
+        description: "RKE2 version to bundle (blank = latest stable)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    name: Build offline asset bundle
+    runs-on: ubuntu-latest
+    steps:
+      # Skip the committed assets/ dir — this job regenerates it fresh.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            install-rke2-offline.sh
+            install-registry-offline.sh
+            deploy-app-offline.sh
+            README.md
+            .gitignore
+            .gitattributes
+            scripts
+            app
+            charts
+            config
+            docs
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve RKE2 version
+        id: ver
+        run: |
+          V="${{ github.event.inputs.rke2_version }}"
+          if [ -z "$V" ]; then
+            V="$(curl -fsSL https://update.rke2.io/v1-release/channels \
+              | python3 -c 'import sys,json;print([c["latest"] for c in json.load(sys.stdin)["data"] if c["id"]=="stable"][0])')"
+          fi
+          echo "rke2=$V" >> "$GITHUB_OUTPUT"
+          echo "Bundling RKE2 $V"
+
+      - name: Fetch RKE2 + registry assets
+        run: ./scripts/fetch-assets.sh "${{ steps.ver.outputs.rke2 }}"
+
+      - name: Build + bundle the hello-db app assets
+        run: ./scripts/build-app-assets.sh   # uses Docker on the runner
+
+      - name: Create offline bundle tarball
+        id: pack
+        run: |
+          RKE2V="${{ steps.ver.outputs.rke2 }}"
+          SAFE="${RKE2V//+/-}"
+          BUNDLE="rke-hw-offline-${SAFE}.tar.gz"
+          tar --exclude=.git --exclude="${BUNDLE}" \
+              -czf "/tmp/${BUNDLE}" -C "${GITHUB_WORKSPACE}" .
+          ( cd /tmp && sha256sum "${BUNDLE}" > "${BUNDLE}.sha256" )
+          ls -lh "/tmp/${BUNDLE}"
+          echo "bundle=${BUNDLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Attach bundle to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          BUNDLE="${{ steps.pack.outputs.bundle }}"
+          NOTES="Offline air-gapped bundle for RKE2 ${{ steps.ver.outputs.rke2 }}. Download \`${BUNDLE}\`, verify against \`${BUNDLE}.sha256\`, unpack on the air-gapped host, then run \`./install-rke2-offline.sh\`."
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "$TAG" --notes "$NOTES"
+          gh release upload "$TAG" \
+            "/tmp/${BUNDLE}" "/tmp/${BUNDLE}.sha256" --clobber
+
+      - name: Upload bundle as workflow artifact (manual runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.bundle }}
+          path: |
+            /tmp/${{ steps.pack.outputs.bundle }}
+            /tmp/${{ steps.pack.outputs.bundle }}.sha256
+          retention-days: 14

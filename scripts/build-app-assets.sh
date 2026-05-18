@@ -63,7 +63,8 @@ save_split() {
 # 1. Build the Flask app image
 # --------------------------------------------------------------------------- #
 echo "[+] Building app image ${APP_IMAGE} from ${APP_DIR}"
-"$ENGINE" build -t "$APP_IMAGE" "$APP_DIR"
+# -f is explicit: Docker (unlike podman) does not auto-detect "Containerfile".
+"$ENGINE" build -f "${APP_DIR}/Containerfile" -t "$APP_IMAGE" "$APP_DIR"
 save_split "$APP_IMAGE" "hello-db-app"
 
 # --------------------------------------------------------------------------- #

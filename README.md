@@ -377,6 +377,22 @@ air-gapped node with no network. The reassembled file is git-ignored so it is
 never accidentally committed. To re-split after a version bump, just re-run
 `scripts/fetch-assets.sh` on a connected host.
 
+### Release bundles (download one file instead of cloning)
+
+The `release` workflow
+([`.github/workflows/release.yml`](.github/workflows/release.yml)) builds a
+single self-contained `rke-hw-offline-<rke2-version>.tar.gz` (the repo +
+freshly regenerated `assets/`, RKE2 + registry + the hello-db app + bundled
+Helm) plus a `.sha256`. Push a `vX.Y.Z` tag and it is attached to that GitHub
+Release; a manual *Run workflow* (optionally pinning the RKE2 version)
+uploads it as a workflow artifact instead. Operators then grab one file:
+
+```bash
+curl -fLO https://github.com/binRick/rke-hw/releases/download/<tag>/rke-hw-offline-<ver>.tar.gz
+sha256sum -c rke-hw-offline-<ver>.tar.gz.sha256
+tar -xzf rke-hw-offline-<ver>.tar.gz && cd rke-hw* && sudo ./install-rke2-offline.sh
+```
+
 ## SELinux
 
 RHEL/Rocky 9 and 10 ship SELinux **Enforcing**. For a strict air-gap install
