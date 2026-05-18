@@ -228,23 +228,33 @@ Override anything the usual Helm way, e.g.
 
 ### Run it
 
+The app image, Postgres image and Helm binary are **committed in
+`assets/app/`** — a plain `git clone` has everything; **no internet, no
+registry needed**.
+
 ```bash
-# 1. ONCE on a connected host: build app + pull postgres + fetch helm CLI
-./scripts/build-app-assets.sh        # fills assets/app/, then git-commit it
-
-# 2. On the air-gapped cluster (private registry already up & trusted):
-sudo ./deploy-app-offline.sh --registry 10.0.0.10:5000
-
-# 3. Open it on any node IP:
-#    http://<node-ip>:30080/
+# Single RKE2 box — the whole thing, offline, no registry:
+sudo ./install-rke2-offline.sh --type server
+sudo ./deploy-app-offline.sh --no-registry
+#  -> http://<node-ip>:30080/
 ```
 
-`deploy-app-offline.sh` reassembles + checksum-verifies the bundled image
-parts, pushes the app and Postgres images into your private registry, then
-uses the **bundled Helm CLI** (`assets/app/helm`) to `helm upgrade --install`
-the chart — no network, no system Helm required. Flags: `--push-only`,
-`--deploy-only`, `--uninstall`, `--namespace`, `--node-port`,
-`--registry`, `--kubeconfig`, `--helm` (`--help` for all).
+`--no-registry` reassembles + checksum-verifies the bundled image parts,
+imports them straight into RKE2's **containerd**, and `helm upgrade
+--install`s the chart with `imagePullPolicy: Never` using the **bundled Helm**
+— zero network, zero registry, zero system Helm.
+
+For **multi-node** clusters, use the private-registry path instead (the
+import is per-node):
+
+```bash
+sudo ./deploy-app-offline.sh --registry 10.0.0.10:5000
+```
+
+Other flags: `--push-only`, `--deploy-only`, `--uninstall`, `--namespace`,
+`--node-port`, `--kubeconfig`, `--helm`, `--ctr` (`--help` for all). Rebuild
+the bundled assets only if you changed the app:
+`./scripts/build-app-assets.sh` on a connected host, then commit `assets/app/`.
 
 Full newbie walkthrough: [`docs/hello-db-app.md`](docs/hello-db-app.md).
 Chart reference: [`charts/hello-db/values.yaml`](charts/hello-db/values.yaml).

@@ -55,6 +55,19 @@ jobs:
       - name: helm template (render with defaults)
         run: helm template hello-db charts/hello-db >/dev/null
 
+      - name: helm template (no-registry / local images)
+        run: |
+          helm template hello-db charts/hello-db \
+            --set image.registry= \
+            --set image.app.repository=localhost/hello-db-app \
+            --set image.postgres.repository=postgres \
+            --set image.pullPolicy=Never > /tmp/nr.yaml
+          # No registry prefix must leak into image refs, and pull is Never.
+          grep -q 'image: "localhost/hello-db-app:' /tmp/nr.yaml
+          grep -q 'image: "postgres:'               /tmp/nr.yaml
+          grep -q 'imagePullPolicy: Never'          /tmp/nr.yaml
+          ! grep -qE 'image: "/'                     /tmp/nr.yaml
+
       - name: helm template (persistence enabled)
         run: |
           helm template hello-db charts/hello-db \

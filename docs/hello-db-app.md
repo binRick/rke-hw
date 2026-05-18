@@ -16,21 +16,62 @@ cluster. It assumes you already finished
 
 A tiny **guestbook**: a Python **Flask** web page with a visit counter and a
 message list, storing everything in a **PostgreSQL** database. Both run as
-pods in the cluster. It proves the offline pipeline works end to end:
-build → bundle → private registry → Helm → running on RKE2.
+pods in the cluster.
+
+> **The app, Postgres and Helm binaries are committed in `assets/app/`.**
+> A plain `git clone` already has everything — you do **not** need internet
+> and you do **not** need a private registry.
 
 ---
 
-## Step 0 — One-time prep (on a computer WITH internet)
+# Simplest path — no internet, no registry (recommended)
 
-Build and bundle the app, Postgres image and Helm CLI:
+For a single RKE2 box (e.g. one RHEL9 server), after
+`sudo ./install-rke2-offline.sh --type server`:
 
 ```bash
-./scripts/build-app-assets.sh
+cd /root/rke-hw
+sudo ./deploy-app-offline.sh --no-registry
 ```
 
-This fills `assets/app/`. Commit it and copy the whole project folder to the
-cluster (same as you did for the RKE2 assets).
+That's the whole thing. It:
+
+1. reassembles + checksum-verifies the bundled image parts,
+2. imports the app + Postgres images straight into RKE2's **containerd**
+   (`ctr -n k8s.io images import`),
+3. uses the **bundled Helm** to install the chart with
+   `imagePullPolicy: Never` (so Kubernetes never tries to pull anything).
+
+Then open it on the node IP:
+
+```bash
+source /etc/profile.d/rke2.sh
+kubectl -n hello-db get pods         # both Running
+#  http://<node-ip>:30080/
+```
+
+Remove it: `sudo ./deploy-app-offline.sh --uninstall`.
+
+> Multi-node clusters: `--no-registry` imports onto **one** node only. For a
+> real multi-node cluster use the registry path below (or re-run the import
+> on every node).
+
+---
+
+# Multi-node path — via the private registry
+
+Use this when you have several nodes. It assumes you finished
+[`docs/two-server-setup.md`](two-server-setup.md) (RKE2 on the KUBE server,
+registry on the REGISTRY server, KUBE trusts the registry).
+
+## Step 0 (optional) — rebuild the bundled assets (computer WITH internet)
+
+Only needed if you changed the app or want newer images — the assets are
+already committed. To regenerate:
+
+```bash
+./scripts/build-app-assets.sh    # refills assets/app/, then commit it
+```
 
 ---
 

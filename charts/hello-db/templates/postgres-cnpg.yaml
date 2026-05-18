@@ -21,7 +21,7 @@ metadata:
     {{- include "hello-db.labels" . | nindent 4 }}
 spec:
   instances: {{ .Values.postgres.ha.instances }}
-  imageName: "{{ .Values.image.registry }}/{{ .Values.image.cnpgPostgres.repository }}:{{ .Values.image.cnpgPostgres.tag }}"
+  imageName: "{{ with .Values.image.registry }}{{ . }}/{{ end }}{{ .Values.image.cnpgPostgres.repository }}:{{ .Values.image.cnpgPostgres.tag }}"
   imagePullPolicy: {{ .Values.image.pullPolicy }}
   primaryUpdateStrategy: unsupervised
   # Quorum-based synchronous replication: commits wait for >=minSyncReplicas

@@ -38,7 +38,7 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: "{{ .Values.image.registry }}/{{ .Values.image.postgres.repository }}:{{ .Values.image.postgres.tag }}"
+          image: "{{ with .Values.image.registry }}{{ . }}/{{ end }}{{ .Values.image.postgres.repository }}:{{ .Values.image.postgres.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - name: postgres
