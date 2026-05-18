@@ -60,6 +60,34 @@ sha256sum "${IMG}.part"* > rke2-images.parts.sha256
 rm -f "$IMG"
 echo "    $(ls "${IMG}.part"* | wc -l) parts written; ${IMG} removed (rebuilt at install time)"
 
+# --------------------------------------------------------------------------- #
+# Private OCI registry image (registry:2) — for the air-gapped registry so the
+# cluster has somewhere to store/serve YOUR application images.
+# Saved as a docker-archive tarball that `podman load` reads offline.
+# --------------------------------------------------------------------------- #
+REGISTRY_IMAGE="${REGISTRY_IMAGE:-docker.io/library/registry:2.8.3}"
+REG_TAR="${ASSETS_DIR}/registry-image.tar"
+echo "[+] Bundling private registry image: ${REGISTRY_IMAGE}"
+if command -v skopeo >/dev/null 2>&1; then
+  skopeo copy --retry-times 3 \
+    "docker://${REGISTRY_IMAGE}" "docker-archive:${REG_TAR}:${REGISTRY_IMAGE}"
+elif command -v docker >/dev/null 2>&1; then
+  docker pull "$REGISTRY_IMAGE"
+  docker save "$REGISTRY_IMAGE" -o "$REG_TAR"
+elif command -v podman >/dev/null 2>&1; then
+  podman pull "$REGISTRY_IMAGE"
+  podman save --format docker-archive -o "$REG_TAR" "$REGISTRY_IMAGE"
+else
+  echo "    !! need skopeo, docker, or podman to fetch the registry image" >&2
+  exit 1
+fi
+printf '%s\n' "$REGISTRY_IMAGE" > "${ASSETS_DIR}/registry-image.ref"
+( cd "$ASSETS_DIR" && sha256sum "$(basename "$REG_TAR")" > registry-image.sha256 )
+reg_mb=$(( $(stat -c%s "$REG_TAR") / 1024 / 1024 ))
+echo "    ok: registry-image.tar (${reg_mb} MB)"
+[[ $reg_mb -ge 100 ]] && echo "    !! >100 MB — split before committing (GitHub limit)" >&2
+
 echo
 echo "[+] assets/ populated. Commit it, move the repo to the air-gapped node,"
 echo "    then run: sudo ./install-rke2-offline.sh --type server"
+echo "    Optional private registry: sudo ./install-registry-offline.sh"

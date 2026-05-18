@@ -13,16 +13,19 @@ Bundled version: see [`assets/VERSION`](assets/VERSION) — **v1.35.4+rke2r1**
 
 ```
 .
-├── install-rke2-offline.sh   # the offline installer (run on the air-gapped node)
+├── install-rke2-offline.sh      # the offline installer (run on the air-gapped node)
+├── install-registry-offline.sh  # optional private OCI registry for your app images
 ├── assets/                   # all binaries & images — no network needed
 │   ├── install.sh            # official RKE2 installer (artifact mode)
 │   ├── rke2.linux-amd64.tar.gz          # RKE2 binaries (~37 MB)
 │   ├── rke2-images.linux-amd64.tar.zst.part00..08  # images, split <100 MB
 │   ├── rke2-images.parts.sha256         # per-part integrity manifest
 │   ├── sha256sum-amd64.txt              # official integrity manifest
+│   ├── registry-image.tar               # registry:2 image (for the private registry)
 │   └── VERSION
 ├── config/
-│   └── config.yaml.example   # copy to config/config.yaml to customize
+│   ├── config.yaml.example      # copy to config/config.yaml to customize
+│   └── registries.yaml.example  # private-registry reference
 └── scripts/
     └── fetch-assets.sh       # re-populate assets/ on a CONNECTED host
 ```
@@ -55,6 +58,50 @@ touching the system, handles SELinux/firewalld/swap pre-flight, renders
 `/etc/rancher/rke2/config.yaml`, and runs the official installer in
 `INSTALL_RKE2_ARTIFACT_PATH` air-gap mode. Run with `--help` for all options;
 `--uninstall` removes RKE2.
+
+## Private registry for your own application images
+
+RKE2 itself needs **no registry** — its system images are imported straight
+into containerd by the installer above. But once the cluster is up, any
+workload of *yours* that references `myapp:1.0` (or even `nginx:latest`) will
+hit `ImagePullBackOff`, because Docker Hub / quay / ghcr are unreachable in
+the air-gap. You need somewhere on-network to **store and serve** app images.
+
+`install-registry-offline.sh` provides that: it loads the bundled
+`registry:2` image, runs it as a **podman + systemd** service with
+**TLS (no auth)**, and writes `/etc/rancher/rke2/registries.yaml` so every
+node pulls from it transparently.
+
+```bash
+# On the node that will host the registry (self-signed TLS, auto IP):
+sudo ./install-registry-offline.sh --host registry.lan --restart-rke2
+
+# Seed app images at install time (any *.tar from `podman save` / skopeo):
+sudo ./install-registry-offline.sh --host registry.lan --seed ./app-images
+
+# On every OTHER cluster node — just trust the CA and point at it:
+sudo ./install-registry-offline.sh --client-only \
+     --host registry.lan --ca ./registry-ca.crt --restart-rke2
+```
+
+Push an image in (from any host that trusts the generated CA), then reference
+it from Kubernetes:
+
+```bash
+podman tag myapp:1.0 registry.lan:5000/myapp:1.0
+podman push    registry.lan:5000/myapp:1.0
+# k8s manifest:  image: registry.lan:5000/myapp:1.0
+```
+
+**New to this?** A complete copy-paste walkthrough for putting the registry
+and RKE2 on **two separate servers** is in
+[`docs/two-server-setup.md`](docs/two-server-setup.md).
+
+`--help` lists all options (port, data-dir, supplying your own cert/key,
+`--mirror-docker-io`, `--open-firewall`, `--uninstall`). The registries.yaml
+shape is documented in [`config/registries.yaml.example`](config/registries.yaml.example).
+Requires `podman` (default on RHEL/Rocky) or `docker` on the registry host —
+bundle the podman RPMs too for a strict air-gap.
 
 ## Refreshing / changing version (connected host only)
 

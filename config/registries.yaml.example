@@ -1,0 +1,33 @@
+# RKE2 private-registry reference — written to /etc/rancher/rke2/registries.yaml.
+# install-registry-offline.sh generates this for you; this file just documents
+# the shape so you can hand-tune or merge it.
+# Full reference: https://docs.rke2.io/install/private_registry
+#
+# After changing this file, restart rke2-server / rke2-agent for it to apply.
+
+# 'mirrors' redirects pulls for a registry host to your air-gapped endpoint.
+mirrors:
+  # Pulls of  registry.lan:5000/myapp:1.0  go straight to the local registry.
+  "registry.lan:5000":
+    endpoint:
+      - "https://registry.lan:5000"
+
+  # Optional: also satisfy plain  docker.io  image names from the local
+  # registry. Only works if you actually pushed those images in under their
+  # original docker.io/library/... paths (there is no pull-through cache in
+  # an air-gap). Enable via install-registry-offline.sh --mirror-docker-io.
+  # docker.io:
+  #   endpoint:
+  #     - "https://registry.lan:5000"
+
+# 'configs' carries TLS (and, if you ever add it, auth) per registry host.
+configs:
+  "registry.lan:5000":
+    tls:
+      # The (self-signed) CA/cert the node should trust. The installer copies
+      # the registry's cert here and points every node at it.
+      ca_file: /etc/rancher/rke2/registry-ca.crt
+    # This setup is TLS, no auth. To add basic auth later:
+    # auth:
+    #   username: <user>
+    #   password: <pass>
