@@ -1,0 +1,12 @@
+apiVersion: v2
+name: hello-db
+description: Offline hello-world — a Flask web app with a PostgreSQL backend, all on RKE2
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - airgap
+  - flask
+  - postgres
+  - rke2
+home: https://github.com/binRick/rke-hw

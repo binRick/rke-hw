@@ -1,0 +1,46 @@
+# Default values for hello-db.
+# The air-gapped deploy script (deploy-app-offline.sh) overrides
+# image.registry with your real private-registry address.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # Private registry installed by install-registry-offline.sh, e.g. 10.0.0.10:5000
+  registry: "registry.lan:5000"
+  pullPolicy: IfNotPresent
+  app:
+    repository: hello-db-app
+    tag: "1.0.0"
+  postgres:
+    repository: postgres
+    tag: "16-alpine"
+
+postgres:
+  database: hello
+  username: hello
+  # Demo password only. Override with --set postgres.password=... in production.
+  password: "hello-pw"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  # Persistence is OFF by default so the chart works on a vanilla RKE2 cluster
+  # with NO StorageClass (data lives in an emptyDir, lost if the pod restarts —
+  # fine for a hello-world). Set enabled: true once you have a StorageClass.
+  persistence:
+    enabled: false
+    storageClass: ""
+    size: 1Gi
+
+app:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  service:
+    # NodePort so you can reach it from outside the cluster with no Ingress.
+    type: NodePort
+    port: 80
+    nodePort: 30080

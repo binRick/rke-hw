@@ -1,0 +1,24 @@
+
+hello-db is deploying into namespace "{{ .Release.Namespace }}".
+
+1. Watch the pods come up:
+     kubectl -n {{ .Release.Namespace }} get pods -w
+
+2. Reach the web app:
+{{- if eq .Values.app.service.type "NodePort" }}
+     On any cluster node IP, open:
+       http://<node-ip>:{{ .Values.app.service.nodePort }}/
+{{- else }}
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "hello-db.appName" . }} 8080:{{ .Values.app.service.port }}
+     then open http://localhost:8080/
+{{- end }}
+
+3. The page shows a visit counter and a guestbook — both stored in
+   PostgreSQL running in the same cluster. Sign the guestbook and refresh.
+
+{{- if not .Values.postgres.persistence.enabled }}
+
+NOTE: postgres.persistence is disabled (emptyDir) — guestbook data is
+lost if the Postgres pod restarts. That's fine for a demo. For durable
+data, install a StorageClass and set postgres.persistence.enabled=true.
+{{- end }}

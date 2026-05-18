@@ -15,6 +15,9 @@ Bundled version: see [`assets/VERSION`](assets/VERSION) — **v1.35.4+rke2r1**
 .
 ├── install-rke2-offline.sh      # the offline installer (run on the air-gapped node)
 ├── install-registry-offline.sh  # optional private OCI registry for your app images
+├── deploy-app-offline.sh        # deploy the bundled hello-db demo app
+├── app/                         # Flask + Postgres demo source + Containerfile
+├── charts/hello-db/             # Helm chart for the demo app
 ├── assets/                   # all binaries & images — no network needed
 │   ├── install.sh            # official RKE2 installer (artifact mode)
 │   ├── rke2.linux-amd64.tar.gz          # RKE2 binaries (~37 MB)
@@ -22,12 +25,14 @@ Bundled version: see [`assets/VERSION`](assets/VERSION) — **v1.35.4+rke2r1**
 │   ├── rke2-images.parts.sha256         # per-part integrity manifest
 │   ├── sha256sum-amd64.txt              # official integrity manifest
 │   ├── registry-image.tar               # registry:2 image (for the private registry)
+│   ├── app/                             # hello-db image parts + bundled helm
 │   └── VERSION
 ├── config/
 │   ├── config.yaml.example      # copy to config/config.yaml to customize
 │   └── registries.yaml.example  # private-registry reference
 └── scripts/
-    └── fetch-assets.sh       # re-populate assets/ on a CONNECTED host
+    ├── fetch-assets.sh       # re-populate assets/ on a CONNECTED host
+    └── build-app-assets.sh   # build/bundle the demo app on a CONNECTED host
 ```
 
 ## Quick start (on the air-gapped node)
@@ -102,6 +107,147 @@ and RKE2 on **two separate servers** is in
 shape is documented in [`config/registries.yaml.example`](config/registries.yaml.example).
 Requires `podman` (default on RHEL/Rocky) or `docker` on the registry host —
 bundle the podman RPMs too for a strict air-gap.
+
+## Demo app: hello-db (Flask + PostgreSQL)
+
+`app/` + `charts/hello-db/` is a complete, runnable sample workload — a tiny
+**Flask guestbook with a visit counter, backed by PostgreSQL**, both running
+as pods *inside* the air-gapped cluster. It is deliberately small but
+structured as a **reference pattern** for hosting real applications on RKE2
+with no internet.
+
+### What it does
+
+- A web page (`/`) shows a visit counter and the last 20 guestbook messages.
+- Posting the form (`POST /add`) writes a row to PostgreSQL.
+- `/healthz` is a cheap **liveness** check (process up); `/readyz` is a
+  **readiness** check that actually runs `SELECT 1` against the database, so
+  the app only receives traffic once its backend is genuinely reachable.
+- `/api/messages` returns the same data as JSON.
+
+The Flask app is served by **gunicorn** (2 workers × 4 threads), runs as a
+**non-root** user (UID 10001, works under RKE2's restricted/SELinux
+defaults), and creates its schema on startup — retrying for ~60s while
+PostgreSQL finishes booting, so pod start ordering doesn't matter.
+
+### How the pieces fit together
+
+```
+            NodePort :30080
+                  │
+        ┌─────────▼──────────┐        ClusterIP :5432
+        │  hello-db-app      │  DB_*  ┌──────────────────┐
+        │  (Flask+gunicorn)  ├───────▶│ hello-db-postgres │
+        │  Deployment + Svc  │  env   │ Deployment + Svc  │
+        └────────────────────┘        └──────────────────┘
+              image: <registry>/hello-db-app:1.0.0
+                      <registry>/postgres:16-alpine
+```
+
+- **Config & secrets**: DB name/user are passed as plain env; the password
+  lives in a Kubernetes `Secret`. The app reads `DB_HOST/PORT/NAME/USER` from
+  env and `DB_PASSWORD` from the Secret via `secretKeyRef` — never baked into
+  the image.
+- **Service discovery**: the app finds the database purely by Service DNS
+  (`<release>-hello-db-postgres`), so nothing is hard-coded to an IP.
+- **Images come from *your* registry**: every image reference is
+  `{{ .Values.image.registry }}/...`, so the cluster never reaches out to
+  Docker Hub. The deploy script rewrites that one value to your private
+  registry address.
+
+### What it proves
+
+It exercises the **entire offline supply chain** in one command:
+
+> **build** (connected host) → **bundle** (split, checksummed tarballs in
+> `assets/app/`) → **private registry** (`install-registry-offline.sh`) →
+> **Helm** (bundled CLI, no system Helm) → **running on RKE2** — with zero
+> network access on the cluster.
+
+If `hello-db` comes up green, you've validated that registry trust,
+`registries.yaml` wiring, image push/pull, Helm, and scheduling all work
+end-to-end on your air-gapped cluster.
+
+### A model for RKE2 app hosting
+
+Use this as the template for your own apps. The pattern it demonstrates:
+
+1. **Build & vendor images on a connected host**, never on the cluster
+   (`scripts/build-app-assets.sh`: build/pull → `save` → split <90 MB →
+   `sha256` manifest + `.ref` files). This is the same Git-LFS-free scheme
+   the RKE2 image bundle uses.
+2. **Serve images from the in-cluster private registry**, not by importing
+   into each node's containerd — this scales to many nodes and image updates.
+3. **Ship a self-contained Helm chart** whose `image.registry` is a single
+   overridable value, so the *same* chart works in dev (Docker Hub) and
+   air-gap (your registry) by changing one `--set`.
+4. **Externalise config**: env + `Secret`, no secrets in images or values
+   committed to git (the demo password is a placeholder — override it).
+5. **Real probes**: liveness ≠ readiness; readiness gates on dependencies so
+   rollouts and Service endpoints behave correctly.
+6. **No hidden infra deps**: defaults to `emptyDir` so the chart runs on a
+   vanilla RKE2 cluster with **no StorageClass**; persistence is opt-in.
+7. **Idempotent, reversible deploys**: `helm upgrade --install` +
+   `--uninstall`; `--push-only` / `--deploy-only` so image distribution and
+   release management can run on different hosts/roles.
+
+### The Helm chart (`charts/hello-db/`)
+
+```
+charts/hello-db/
+├── Chart.yaml                     # name/version/appVersion
+├── values.yaml                    # the only file you normally edit
+└── templates/
+    ├── _helpers.tpl               # name/label helpers (fullname, labels)
+    ├── postgres-secret.yaml       # DB credentials (Secret)
+    ├── postgres-deployment.yaml   # PG Deployment (+ optional PVC)
+    ├── postgres-service.yaml      # ClusterIP :5432
+    ├── app-deployment.yaml        # Flask Deployment, probes, env-from-secret
+    ├── app-service.yaml           # NodePort :30080 (configurable)
+    └── NOTES.txt                  # post-install access instructions
+```
+
+Key `values.yaml` knobs:
+
+| Value | Default | Purpose |
+|---|---|---|
+| `image.registry` | `registry.lan:5000` | Your private registry (deploy script overrides) |
+| `image.app.tag` / `image.postgres.tag` | `1.0.0` / `16-alpine` | Image tags |
+| `app.replicas` | `1` | Flask replica count |
+| `app.service.type` / `nodePort` | `NodePort` / `30080` | How the app is exposed |
+| `postgres.password` | `hello-pw` | **Demo only — override in production** |
+| `postgres.persistence.enabled` | `false` | `false`=emptyDir (no StorageClass needed); `true`=PVC |
+| `postgres.persistence.storageClass` / `size` | `""` / `1Gi` | Used only when persistence is enabled |
+
+Override anything the usual Helm way, e.g.
+`--set postgres.password=$(openssl rand -hex 16) --set app.replicas=3`.
+
+### Run it
+
+```bash
+# 1. ONCE on a connected host: build app + pull postgres + fetch helm CLI
+./scripts/build-app-assets.sh        # fills assets/app/, then git-commit it
+
+# 2. On the air-gapped cluster (private registry already up & trusted):
+sudo ./deploy-app-offline.sh --registry 10.0.0.10:5000
+
+# 3. Open it on any node IP:
+#    http://<node-ip>:30080/
+```
+
+`deploy-app-offline.sh` reassembles + checksum-verifies the bundled image
+parts, pushes the app and Postgres images into your private registry, then
+uses the **bundled Helm CLI** (`assets/app/helm`) to `helm upgrade --install`
+the chart — no network, no system Helm required. Flags: `--push-only`,
+`--deploy-only`, `--uninstall`, `--namespace`, `--node-port`,
+`--registry`, `--kubeconfig`, `--helm` (`--help` for all).
+
+Full newbie walkthrough: [`docs/hello-db-app.md`](docs/hello-db-app.md).
+Chart reference: [`charts/hello-db/values.yaml`](charts/hello-db/values.yaml).
+
+> **Persistence note:** with the `emptyDir` default, guestbook data is lost
+> if the Postgres pod restarts — fine for a demo. For durable data, install a
+> StorageClass and redeploy with `--set postgres.persistence.enabled=true`.
 
 ## Refreshing / changing version (connected host only)
 

@@ -1,3 +1,12 @@
 # Reassembled at install time from assets/rke2-images.linux-amd64.tar.zst.part*
 # (do not commit the ~812 MB reconstructed file — only the split parts).
 /assets/rke2-images.linux-amd64.tar.zst
+
+# hello-db app image tarballs are committed split into <90 MB parts; the
+# reassembled tarballs are rebuilt at deploy time — never commit these.
+/assets/app/hello-db-app.tar
+/assets/app/postgres.tar
+
+# Local Python cruft
+__pycache__/
+*.pyc
