@@ -249,6 +249,108 @@ Chart reference: [`charts/hello-db/values.yaml`](charts/hello-db/values.yaml).
 > if the Postgres pod restarts — fine for a demo. For durable data, install a
 > StorageClass and redeploy with `--set postgres.persistence.enabled=true`.
 
+### Updating the app (developer workflow)
+
+The iteration loop has two halves: the **connected side** (rebuild & bundle)
+and the **air-gapped side** (push & roll out). Pick the scenario:
+
+#### A. You changed application code (`app/`)
+
+> **Golden rule: never reuse an image tag.** The chart pulls with
+> `imagePullPolicy: IfNotPresent`, so re-pushing `:1.0.0` will *not* update
+> running nodes. Every code change gets a **new immutable tag**.
+
+**On a connected host:**
+
+1. Edit the code in `app/` (e.g. `app/app.py`).
+2. Pick the next version, e.g. `1.1.0`. (Optional but tidy: also bump
+   `version`/`appVersion` in `charts/hello-db/Chart.yaml` and the default
+   `image.app.tag` in `charts/hello-db/values.yaml` to match.)
+3. Rebuild and re-bundle with that tag:
+   ```bash
+   APP_TAG=1.1.0 ./scripts/build-app-assets.sh
+   ```
+   This rebuilds the image, re-splits `assets/app/hello-db-app.tar.part*`,
+   and refreshes `assets/app/hello-db-app.ref` so it now reads
+   `localhost/hello-db-app:1.1.0`.
+4. Commit the code, chart, and the regenerated `assets/app/` together:
+   ```bash
+   git add app charts assets/app
+   git commit -m "hello-db 1.1.0: <what changed>"
+   ```
+5. Move the updated repo to the air-gapped side (USB / mirror), as usual.
+
+**On the air-gapped cluster:**
+
+6. Push the new image and roll out the release in one step:
+   ```bash
+   sudo ./deploy-app-offline.sh --registry 10.0.0.10:5000
+   ```
+   `deploy-app-offline.sh` reads the new tag from the `.ref` file
+   automatically, pushes `…/hello-db-app:1.1.0`, then
+   `helm upgrade --install` performs a **rolling update** (old pods stay up
+   until the new ones pass `/readyz`). `--wait` blocks until it's healthy.
+7. Verify:
+   ```bash
+   KUBECONFIG=/etc/rancher/rke2/rke2.yaml \
+     kubectl -n hello-db rollout status deploy/hello-db-app
+   kubectl -n hello-db get pods -o wide
+   ```
+
+#### B. You only changed the chart / config (no code change)
+
+No rebuild needed — the images are unchanged. Just commit the edited
+`charts/hello-db/` files, move the repo over, and run the deploy step
+without re-pushing images:
+
+```bash
+sudo ./deploy-app-offline.sh --registry 10.0.0.10:5000 --deploy-only
+```
+
+Or override a single value ad hoc without editing files, e.g. scale up or
+rotate the DB password:
+
+```bash
+KUBECONFIG=/etc/rancher/rke2/rke2.yaml assets/app/helm \
+  upgrade hello-db charts/hello-db -n hello-db --reuse-values \
+  --set app.replicas=3
+```
+
+#### Roll back a bad release
+
+Helm keeps revision history, so recovery doesn't need the old artifacts:
+
+```bash
+KUBECONFIG=/etc/rancher/rke2/rke2.yaml assets/app/helm \
+  history hello-db -n hello-db
+KUBECONFIG=/etc/rancher/rke2/rke2.yaml assets/app/helm \
+  rollback hello-db <REVISION> -n hello-db
+```
+
+(The previous image tag is still in the registry from its earlier push, so
+the rollback's pods pull cleanly — another reason tags must be immutable.)
+
+#### Splitting the roles
+
+In a stricter setup the developer who builds images and the operator who
+releases may be different people/hosts. Decouple them:
+
+- Build host / image custodian: `… --push-only` (loads & pushes images only).
+- Release operator on a cluster node: `… --deploy-only` (Helm only).
+
+#### Notes for real apps
+
+- **Database schema changes:** the demo uses `CREATE TABLE IF NOT EXISTS` on
+  startup. Real apps should ship versioned migrations (run them as a Helm
+  pre-upgrade `Job`/hook, or an init container) rather than mutating schema
+  from app code.
+- **Postgres upgrades:** bumping `image.postgres.tag` across a major version
+  is *not* a drop-in change if persistence is enabled (PG data dir is
+  version-specific) — plan a dump/restore. Patch/minor bumps are safe.
+- **Config vs. image:** anything that changes per environment belongs in
+  `values.yaml`/`Secret`, not the image — so the same tagged image promotes
+  unchanged from dev to the air-gapped cluster.
+
 ## Refreshing / changing version (connected host only)
 
 ```bash
