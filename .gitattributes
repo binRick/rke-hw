@@ -1,0 +1,6 @@
+# Bundled RKE2 artifacts are binary — never diff/merge/convert them.
+# The images tarball is committed split into <100 MB parts (assets/*.part*)
+# so this repo needs NO Git LFS and pushes to GitHub normally.
+assets/*.tar.gz binary
+assets/*.part*  binary
+assets/*.rpm    binary

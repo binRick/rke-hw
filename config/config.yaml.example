@@ -1,0 +1,26 @@
+# RKE2 config reference — copy to config/config.yaml to have the installer
+# use it verbatim (it is written to /etc/rancher/rke2/config.yaml).
+# Full reference: https://docs.rke2.io/reference/server_config
+#
+# --- First / only server: leave 'server' and 'token' unset ---
+# --- HA server join or agent: set both ---
+#
+# server: https://10.0.0.10:9345
+# token:  "K10<...>::server:<...>"      # from <data-dir>/server/node-token
+
+# Extra SANs for the API server certificate (servers only).
+tls-san:
+  - kube-api.example.com
+
+# IP this node advertises (set on multi-NIC hosts).
+# node-ip: 10.0.0.11
+
+# Default CNI is canal (bundled). Other bundled options: cilium, calico.
+# cni: canal
+
+# Hardening / misc examples:
+# write-kubeconfig-mode: "0644"
+# disable:
+#   - rke2-ingress-nginx
+# node-label:
+#   - "role=worker"

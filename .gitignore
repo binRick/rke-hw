@@ -1,0 +1,3 @@
+# Reassembled at install time from assets/rke2-images.linux-amd64.tar.zst.part*
+# (do not commit the ~812 MB reconstructed file — only the split parts).
+/assets/rke2-images.linux-amd64.tar.zst
