@@ -455,9 +455,21 @@ tar -xzf rke-hw-offline-<ver>.tar.gz && cd rke-hw* && sudo ./install-rke2-offlin
 
 ## SELinux
 
-RHEL/Rocky 9 and 10 ship SELinux **Enforcing**. For a strict air-gap install
-with SELinux enforcing, drop the matching `container-selinux-*.rpm` and
-`rke2-selinux-*.rpm` into `assets/`. The installer detects the host's EL major
-version and automatically prefers the right RPM (e.g. `*.el9.*` on RHEL 9,
-`*.el10.*` on RHEL 10), so you can bundle both families side by side.
-Otherwise run with `--selinux-permissive`.
+RHEL/Rocky 9 and 10 ship SELinux **Enforcing**. The required policy RPMs are
+**already committed in `assets/`** for both families, so a SELinux-Enforcing
+host is clone-and-go — no `--selinux-permissive`, no manual RPM hunting:
+
+```
+assets/container-selinux-*.el9.noarch.rpm   assets/rke2-selinux-*.el9.noarch.rpm
+assets/container-selinux-*.el10.noarch.rpm  assets/rke2-selinux-*.el10.noarch.rpm
+```
+
+The installer detects the host's EL major version and automatically installs
+the matching pair (`*.el9.*` on RHEL/Rocky 9, `*.el10.*` on 10) before
+starting RKE2. `--selinux-permissive` remains available as a fallback.
+
+These are refreshed by `scripts/fetch-assets.sh` on a connected host:
+`rke2-selinux` from the `rancher/rke2-selinux` GitHub release
+(`RKE2_SELINUX_TAG`, default `v0.22.latest.1`) and its `container-selinux`
+dependency resolved from CentOS Stream AppStream repodata (so the URL never
+rots). Integrity is recorded in `assets/selinux-rpms.sha256`.

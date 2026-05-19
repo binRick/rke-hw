@@ -87,6 +87,52 @@ reg_mb=$(( $(stat -c%s "$REG_TAR") / 1024 / 1024 ))
 echo "    ok: registry-image.tar (${reg_mb} MB)"
 [[ $reg_mb -ge 100 ]] && echo "    !! >100 MB — split before committing (GitHub limit)" >&2
 
+# --------------------------------------------------------------------------- #
+# SELinux policy RPMs (EL9 + EL10) so a SELinux-Enforcing RHEL/Rocky host is
+# clone-and-go. The installer auto-picks the one matching the host's EL major.
+#   rke2-selinux  : from the rancher/rke2-selinux GitHub release
+#   container-selinux (its dependency): latest from CentOS Stream AppStream,
+#       resolved via repodata so the URL never rots.
+# --------------------------------------------------------------------------- #
+RKE2_SELINUX_TAG="${RKE2_SELINUX_TAG:-v0.22.latest.1}"
+echo "[+] Bundling SELinux RPMs (rke2-selinux ${RKE2_SELINUX_TAG} + container-selinux)"
+
+gh_assets_json="$(curl -fsSL "https://api.github.com/repos/rancher/rke2-selinux/releases/tags/${RKE2_SELINUX_TAG}")"
+for el in 9 10; do
+  url="$(printf '%s' "$gh_assets_json" | python3 -c "import sys,json
+d=json.load(sys.stdin)
+for a in d['assets']:
+    n=a['name']
+    if n.endswith('.el${el}.noarch.rpm') and 'src' not in n:
+        print(a['browser_download_url']); break")"
+  [[ -n "$url" ]] || { echo "    !! no rke2-selinux el${el} asset in ${RKE2_SELINUX_TAG}" >&2; continue; }
+  echo "    rke2-selinux el${el}: $(basename "$url")"
+  curl -fL --retry 3 -o "${ASSETS_DIR}/$(basename "$url")" "$url"
+done
+
+resolve_container_selinux() {  # $1 = EL major (9|10)
+  local el="$1" base="https://mirror.stream.centos.org/${el}-stream/AppStream/x86_64/os"
+  local prim; prim="$(curl -fsSL "${base}/repodata/repomd.xml" \
+    | grep -oE 'repodata/[a-f0-9]*-primary\.xml\.(gz|zst)' | head -1)"
+  [[ -n "$prim" ]] || return 1
+  curl -fsSL "${base}/${prim}" -o "/tmp/cs-prim-${el}"
+  case "$prim" in
+    *.zst) zstd -dc "/tmp/cs-prim-${el}" ;;
+    *)     gzip -dc "/tmp/cs-prim-${el}" ;;
+  esac > "/tmp/cs-prim-${el}.xml"
+  local path
+  path="$(grep -oE "Packages/container-selinux-[0-9][^\"]*\.el${el}\.noarch\.rpm" \
+          "/tmp/cs-prim-${el}.xml" | sort -V | tail -1)"
+  [[ -n "$path" ]] || return 1
+  echo "    container-selinux el${el}: $(basename "$path")"
+  curl -fL --retry 3 -o "${ASSETS_DIR}/$(basename "$path")" "${base}/${path}"
+}
+for el in 9 10; do
+  resolve_container_selinux "$el" \
+    || echo "    !! could not resolve container-selinux el${el} (bundle manually)" >&2
+done
+( cd "$ASSETS_DIR" && sha256sum ./*selinux*.el*.noarch.rpm > selinux-rpms.sha256 2>/dev/null || true )
+
 echo
 echo "[+] assets/ populated. Commit it, move the repo to the air-gapped node,"
 echo "    then run: sudo ./install-rke2-offline.sh --type server"
